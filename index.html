@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ghostream</title>
+
+<style>
+:root {
+    --bg: #09090b;
+    --panel: #141417;
+    --card: #202024;
+    --border: #303036;
+    --accent: #9333ea;
+    --text: #f4f4f5;
+    --muted: #a1a1aa;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    height: 100vh;
+    display: flex;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, sans-serif;
+}
+
+.sidebar {
+    width: 290px;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    transition: margin .2s;
+}
+
+.sidebar.closed { margin-left: -290px; }
+
+.sidebar header {
+    padding: 15px;
+    border-bottom: 1px solid var(--border);
+}
+
+input, button, select {
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 9px;
+}
+
+input { width: 100%; }
+
+.playlist {
+    overflow-y: auto;
+    padding: 10px;
+    flex: 1;
+}
+
+.track {
+    padding: 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    overflow-wrap: anywhere;
+    font-size: 14px;
+}
+
+.track:hover { background: var(--card); }
+
+.track.active {
+    background: var(--accent);
+}
+
+main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+nav {
+    height: 58px;
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    gap: 10px;
+}
+
+.brand {
+    color: #c084fc;
+    font-weight: bold;
+}
+
+.now {
+    color: var(--muted);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.stage {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    gap: 15px;
+}
+
+video {
+    width: 100%;
+    max-width: 1100px;
+    max-height: 72vh;
+    background: black;
+    border-radius: 9px;
+}
+
+.controls {
+    width: 100%;
+    max-width: 1100px;
+    padding: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.group {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+
+button { cursor: pointer; }
+
+button:hover, select:hover {
+    border-color: var(--accent);
+}
+
+button.active {
+    background: var(--accent);
+}
+
+@media(max-width: 700px) {
+    .sidebar {
+        position: fixed;
+        z-index: 5;
+        height: 100%;
+    }
+
+    .controls { justify-content: center; }
+}
+</style>
+</head>
+
+<body>
+
+<aside class="sidebar" id="sidebar">
+    <header>
+        <input id="search" placeholder="Search library..." oninput="filterTracks()">
+    </header>
+    <div class="playlist" id="playlist"></div>
+</aside>
+
+<main>
+    <nav>
+        <div class="brand">
+            <button onclick="toggleMenu()">☰</button>
+            👻 GHOSTREAM
+        </div>
+        <div class="now" id="now">Nothing playing</div>
+    </nav>
+
+    <section class="stage">
+        <video id="player" controls playsinline>
+            Your browser does not support video playback.
+        </video>
+
+        <div class="controls">
+            <div class="group">
+                <button onclick="prev()">Prev</button>
+                <button onclick="next()">Next</button>
+                <button id="autoplay" class="active" onclick="toggleAutoplay()">Autoplay: ON</button>
+                <button id="shuffle" onclick="toggleShuffle()">Shuffle: OFF</button>
+                <button id="loop" onclick="toggleLoop()">Loop: OFF</button>
+            </div>
+
+            <div class="group">
+                <label>Speed</label>
+                <select id="speed" onchange="changeSpeed()">
+                    <option value=".5">0.5x</option>
+                    <option value=".75">0.75x</option>
+                    <option value="1" selected>1x</option>
+                    <option value="1.25">1.25x</option>
+                    <option value="1.5">1.5x</option>
+                    <option value="2">2x</option>
+                </select>
+
+                <label>Quality</label>
+                <select id="quality" onchange="changeQuality()">
+                    <option value="orig">Original</option>
+                    <option value="720">720p</option>
+                    <option value="480">480p</option>
+                </select>
+            </div>
+        </div>
+    </section>
+</main>
+
+<script>
+const player = document.getElementById('player');
+
+let videos = [];
+let current = 0;
+let autoplay = true;
+let shuffle = false;
+let loop = false;
+let baseOffset = 0;
+
+function savedKey(name) {
+    return 'ghostream_' + name;
+}
+
+async function init() {
+    const response = await fetch('/api/videos');
+    videos = await response.json();
+
+    const playlist = document.getElementById('playlist');
+
+    if (!videos.length) {
+        playlist.textContent = 'No supported videos found.';
+        return;
+    }
+
+    videos.forEach((name, i) => {
+        const el = document.createElement('div');
+        el.className = 'track';
+        el.textContent = name;
+        el.dataset.name = name;
+        el.onclick = () => play(i, false);
+        playlist.appendChild(el);
+    });
+
+    play(0, true);
+}
+
+function play(index, resume) {
+    if (index < 0 || index >= videos.length) return;
+
+    current = index;
+    const name = videos[current];
+
+    document.getElementById('now').textContent = name;
+
+    document.querySelectorAll('.track').forEach((el, i) => {
+        el.classList.toggle('active', i === current);
+    });
+
+    const position = resume
+        ? Number(localStorage.getItem(savedKey(name)) || 0)
+        : 0;
+
+    load(position);
+}
+
+function load(position) {
+    const quality = document.getElementById('quality').value;
+
+    const params = new URLSearchParams();
+
+    if (quality !== 'orig') {
+        params.set('res', quality);
+        if (position > 0) params.set('t', Math.floor(position));
+        baseOffset = Math.floor(position);
+    } else {
+        baseOffset = 0;
+    }
+
+    const name = videos[current];
+
+    player.src = '/video/' +
+        encodeURIComponent(name) +
+        (params.size ? '?' + params.toString() : '');
+
+    player.load();
+
+    player.onloadedmetadata = () => {
+        if (quality === 'orig' && position > 0 &&
+            position < player.duration) {
+            player.currentTime = position;
+        }
+
+        changeSpeed();
+        player.play().catch(() => {});
+    };
+}
+
+function next() {
+    if (!videos.length) return;
+
+    if (shuffle && videos.length > 1) {
+        let index;
+        do {
+            index = Math.floor(Math.random() * videos.length);
+        } while (index === current);
+
+        play(index, false);
+    } else {
+        play((current + 1) % videos.length, false);
+    }
+}
+
+function prev() {
+    play((current - 1 + videos.length) % videos.length, false);
+}
+
+function toggleAutoplay() {
+    autoplay = !autoplay;
+    updateButton('autoplay', 'Autoplay', autoplay);
+}
+
+function toggleShuffle() {
+    shuffle = !shuffle;
+    updateButton('shuffle', 'Shuffle', shuffle);
+}
+
+function toggleLoop() {
+    loop = !loop;
+    player.loop = loop;
+    updateButton('loop', 'Loop', loop);
+}
+
+function updateButton(id, name, state) {
+    const btn = document.getElementById(id);
+    btn.textContent = name + ': ' + (state ? 'ON' : 'OFF');
+    btn.classList.toggle('active', state);
+}
+
+function changeSpeed() {
+    player.playbackRate =
+        Number(document.getElementById('speed').value);
+}
+
+function changeQuality() {
+    const position = baseOffset + player.currentTime;
+    load(position);
+}
+
+function toggleMenu() {
+    document.getElementById('sidebar').classList.toggle('closed');
+}
+
+function filterTracks() {
+    const query = document.getElementById('search')
+        .value.toLowerCase();
+
+    document.querySelectorAll('.track').forEach(el => {
+        el.style.display =
+            el.dataset.name.toLowerCase().includes(query)
+                ? ''
+                : 'none';
+    });
+}
+
+// Save playback position.
+setInterval(() => {
+    if (!player.paused && videos[current]) {
+        localStorage.setItem(
+            savedKey(videos[current]),
+            baseOffset + player.currentTime
+        );
+    }
+}, 3000);
+
+player.addEventListener('ended', () => {
+    localStorage.removeItem(savedKey(videos[current]));
+
+    if (!loop && autoplay) next();
+});
+
+document.addEventListener('keydown', e => {
+    if (['INPUT', 'SELECT'].includes(document.activeElement.tagName)) {
+        return;
+    }
+
+    switch (e.code) {
+        case 'Space':
+            e.preventDefault();
+            player.paused ? player.play() : player.pause();
+            break;
+
+        case 'ArrowRight':
+            player.currentTime += 10;
+            break;
+
+        case 'ArrowLeft':
+            player.currentTime -= 10;
+            break;
+
+        case 'KeyN':
+            next();
+            break;
+
+        case 'KeyM':
+            toggleMenu();
+            break;
+
+        case 'KeyF':
+            player.requestFullscreen();
+            break;
+    }
+});
+
+init();
+</script>
+
+</body>
+</html>
